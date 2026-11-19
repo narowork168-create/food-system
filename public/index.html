@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="km">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>កុម្ម៉ង់ម្ហូបអាហារតាមអនឡាញ</title>
+  <script src="/socket.io/socket.io.js"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Kantumruy+Pro:wght@400;600;700&display=swap" rel="stylesheet">
+  <style>
+    body { font-family: 'Kantumruy Pro', sans-serif; background: #f8fafc; color: #1e293b; margin: 0; padding: 20px; }
+    .container { max-width: 1050px; margin: auto; display: grid; grid-template-columns: 2fr 1fr; gap: 25px; }
+    h1 { text-align: center; color: #0f172a; margin-bottom: 10px; font-size: 24px; }
+    .categories { text-align: center; margin-bottom: 20px; display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; }
+    .cat-btn { background: white; border: 1px solid #cbd5e1; padding: 8px 16px; border-radius: 20px; cursor: pointer; font-family: inherit; font-weight: 600; }
+    .cat-btn.active { background: #2563eb; color: white; border-color: #2563eb; }
+    .menu-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 15px; }
+    .menu-card { background: white; border-radius: 12px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.06); display: flex; flex-direction: column; justify-content: space-between; }
+    .menu-card img { width: 100%; height: 140px; object-fit: cover; }
+    .menu-info { padding: 15px; text-align: center; }
+    .menu-info h4 { margin: 5px 0; font-size: 16px; }
+    .price { color: #ef4444; font-weight: bold; font-size: 18px; margin: 8px 0; }
+    .btn-add { background: #2563eb; color: white; border: none; padding: 10px; width: 100%; border-radius: 8px; cursor: pointer; font-weight: bold; font-family: inherit; }
+    .btn-add:hover { background: #1d4ed8; }
+    .cart-box { background: white; padding: 20px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.08); height: fit-content; position: sticky; top: 20px; }
+    .cart-item { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid #f1f5f9; }
+    .qty-btn { background: #e2e8f0; border: none; width: 28px; height: 28px; border-radius: 4px; cursor: pointer; font-weight: bold; }
+    input { width: 100%; padding: 10px; margin: 6px 0; border: 1px solid #cbd5e1; border-radius: 6px; box-sizing: border-box; font-family: inherit; }
+    .btn-order { width: 100%; padding: 12px; background: #f59e0b; color: white; border: none; border-radius: 8px; font-size: 16px; font-weight: bold; cursor: pointer; margin-top: 10px; font-family: inherit; }
+    .btn-pay { width: 100%; padding: 14px; background: #10b981; color: white; border: none; border-radius: 8px; font-size: 16px; font-weight: bold; cursor: pointer; margin-top: 10px; display: none; font-family: inherit; }
+    .status-box { margin-top: 15px; padding: 15px; background: #dcfce7; border-left: 5px solid #16a34a; border-radius: 6px; display: none; font-weight: bold; color: #14532d; }
+    @media (max-width: 768px) { .container { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+
+  <h1>🍽️ សូមស្វាគមន៍មកកាន់ភោជនីយដ្ឋានយើងខ្ញុំ</h1>
+  
+  <div class="categories">
+    <button class="cat-btn active" onclick="filterCategory('ALL', this)">ទាំងអស់</button>
+    <button class="cat-btn" onclick="filterCategory('ម្ហូបគោក', this)">ម្ហូបគោក</button>
+    <button class="cat-btn" onclick="filterCategory('សម្ល', this)">សម្ល</button>
+    <button class="cat-btn" onclick="filterCategory('ភេសជ្ជៈ', this)">ភេសជ្ជៈ</button>
+  </div>
+
+  <div class="container">
+    <div class="menu-grid" id="menuList">កំពុងទាញបញ្ជីមុខម្ហូប...</div>
+
+    <div class="cart-box">
+      <h3>🛒 កន្ត្រករបស់អ្នក (<span id="cartCount">0</span>)</h3>
+      <div id="cartItems">មិនទាន់មានមុខម្ហូបក្នុងកន្ត្រកទេ</div>
+      <hr>
+      <p style="font-size: 18px;"><strong>សរុបទឹកប្រាក់៖ <span style="color: #16a34a;">$<span id="totalAmount">0.00</span></span></strong></p>
+
+      <input type="text" id="custName" placeholder="ឈ្មោះរបស់អ្នក (ឧ. សុខា)">
+      <input type="text" id="custPhone" placeholder="លេខទូរស័ព្ទ (ឧ. 012 345 678)">
+      <input type="text" id="custAddress" placeholder="អាសយដ្ឋានដឹកជញ្ជូន">
+
+      <button class="btn-order" onclick="placeOrder()">បញ្ជាទិញឥឡូវនេះ</button>
+      <button class="btn-pay" id="btnPay" onclick="simulateBankPayment()">💳 ស្កេនបង់ប្រាក់ (បញ្ជាក់ការទូទាត់)</button>
+
+      <div class="status-box" id="statusBox"></div>
+    </div>
+  </div>
+
+  <script>
+    const socket = io();
+    let allMenus = [];
+    let cart = [];
+    let currentOrderId = null;
+
+    async function loadMenus() {
+      const res = await fetch('/api/menus');
+      allMenus = await res.json();
+      renderMenus(allMenus);
+    }
+
+    function renderMenus(menus) {
+      const menuList = document.getElementById('menuList');
+      menuList.innerHTML = '';
+      if (menus.length === 0) {
+        menuList.innerHTML = '<p>មិនមានមុខម្ហូបក្នុងប្រភេទនេះទេ។</p>';
+        return;
+      }
+      menus.forEach(menu => {
+        const img = menu.image_url || 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=400';
+        menuList.innerHTML += `
+          <div class="menu-card">
+            <img src="${img}" alt="${menu.name}">
+            <div class="menu-info">
+              <small style="color: #64748b;">${menu.category || 'ទូទៅ'}</small>
+              <h4>${menu.name}</h4>
+              <div class="price">$${parseFloat(menu.price).toFixed(2)}</div>
+              <button class="btn-add" onclick="addToCart(${menu.id}, '${menu.name}', ${menu.price})">+ ដាក់ចូលកន្ត្រក</button>
+            </div>
+          </div>
+        `;
+      });
+    }
+
+    function filterCategory(cat, btn) {
+      document.querySelectorAll('.cat-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      if (cat === 'ALL') renderMenus(allMenus);
+      else renderMenus(allMenus.filter(m => m.category === cat));
+    }
+
+    function addToCart(id, name, price) {
+      const existing = cart.find(item => item.menu_id === id);
+      if (existing) existing.quantity += 1;
+      else cart.push({ menu_id: id, name, price, quantity: 1 });
+      renderCart();
+    }
+
+    function updateQty(id, change) {
+      const item = cart.find(i => i.menu_id === id);
+      if (!item) return;
+      item.quantity += change;
+      if (item.quantity <= 0) cart = cart.filter(i => i.menu_id !== id);
+      renderCart();
+    }
+
+    function renderCart() {
+      const cartItems = document.getElementById('cartItems');
+      const cartCount = document.getElementById('cartCount');
+      const totalAmount = document.getElementById('totalAmount');
+      
+      if (cart.length === 0) {
+        cartItems.innerHTML = 'មិនទាន់មានមុខម្ហូបក្នុងកន្ត្រកទេ';
+        cartCount.innerText = '0';
+        totalAmount.innerText = '0.00';
+        return;
+      }
+
+      cartItems.innerHTML = '';
+      let total = 0, count = 0;
+      cart.forEach(item => {
+        total += item.price * item.quantity;
+        count += item.quantity;
+        cartItems.innerHTML += `
+          <div class="cart-item">
+            <div><strong>${item.name}</strong><br><small>$${item.price} x ${item.quantity}</small></div>
+            <div>
+              <button class="qty-btn" onclick="updateQty(${item.menu_id}, -1)">-</button>
+              <button class="qty-btn" onclick="updateQty(${item.menu_id}, 1)">+</button>
+            </div>
+          </div>
+        `;
+      });
+      cartCount.innerText = count;
+      totalAmount.innerText = total.toFixed(2);
+    }
+
+    async function placeOrder() {
+      if (cart.length === 0) return alert('សូមរើសមុខម្ហូបជាមុនសិន!');
+      const customer_name = document.getElementById('custName').value;
+      const customer_phone = document.getElementById('custPhone').value;
+      const delivery_address = document.getElementById('custAddress').value;
+
+      if (!customer_name || !customer_phone || !delivery_address) {
+        return alert('សូមបំពេញឈ្មោះ លេខទូរស័ព្ទ និងអាសយដ្ឋាន!');
+      }
+
+      const res = await fetch('/api/orders', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ customer_name, customer_phone, delivery_address, items: cart })
+      });
+      const data = await res.json();
+      currentOrderId = data.order.id;
+
+      document.getElementById('btnPay').style.display = 'block';
+      alert(`បានបង្កើតការបញ្ជាទិញ #${currentOrderId} រួចរាល់! សូមចុចប៊ូតុងពណ៌បៃតងដើម្បីបង់ប្រាក់។`);
+    }
+
+    async function simulateBankPayment() {
+      if (!currentOrderId) return;
+      await fetch(`/api/payment-confirm/${currentOrderId}`, { method: 'POST' });
+      document.getElementById('btnPay').style.display = 'none';
+      const statusBox = document.getElementById('statusBox');
+      statusBox.style.display = 'block';
+      statusBox.innerText = `✅ បង់ប្រាក់ជោគជ័យ! ចុងភៅកំពុងចម្អិនម្ហូបជូនអ្នក (Order #${currentOrderId})...`;
+    }
+
+    socket.on('order_ready_alert', (data) => {
+      if (data.order.id === currentOrderId) {
+        const statusBox = document.getElementById('statusBox');
+        statusBox.innerText = `🛵 ម្ហូបរួចរាល់ហើយ! អ្នកដឹកជញ្ជូនកំពុងដឹកជូនទៅទីតាំងរបស់អ្នក។`;
+      }
+    });
+
+    loadMenus();
+  </script>
+</body>
+</html>
